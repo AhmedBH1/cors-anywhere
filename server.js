@@ -1,49 +1,49 @@
-// Listen on a specific host via the HOST environment variable
-var host = process.env.HOST || '0.0.0.0';
-// Listen on a specific port via the PORT environment variable
-var port = process.env.PORT || 8080;
+// Allow invalid TLS certificates (optional, useful for internal testing)
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
-// Grab the blacklist from the command-line so that we can update the blacklist without deploying
-// again. CORS Anywhere is open by design, and this blacklist is not used, except for countering
-// immediate abuse (e.g. denial of service). If you want to block all origins except for some,
-// use originWhitelist instead.
-var originBlacklist = parseEnvList(process.env.CORSANYWHERE_BLACKLIST);
-var originWhitelist = parseEnvList(process.env.CORSANYWHERE_WHITELIST);
-function parseEnvList(env) {
-  if (!env) {
-    return [];
-  }
-  return env.split(',');
-}
+// Required setup
+const cors_proxy = require('./lib/cors-anywhere');
+const parseEnvList = (env) => (env ? env.split(',') : []);
 
-// Set up rate-limiting to avoid abuse of the public CORS Anywhere server.
-var checkRateLimit = require('./lib/rate-limit')(process.env.CORSANYWHERE_RATELIMIT);
+const host = process.env.HOST || '0.0.0.0';
+const port = process.env.PORT || 8080;
 
-var cors_proxy = require('./lib/cors-anywhere');
+const originBlacklist = parseEnvList(process.env.CORSANYWHERE_BLACKLIST);
+const originWhitelist = parseEnvList(process.env.CORSANYWHERE_WHITELIST);
+const checkRateLimit = require('./lib/rate-limit')(process.env.CORSANYWHERE_RATELIMIT);
+
+// ✅ FINAL FIXED VERSION
 cors_proxy.createServer({
   originBlacklist: originBlacklist,
   originWhitelist: originWhitelist,
-  requireHeader: ['origin', 'x-requested-with'],
+  requireHeader: [], // ✅ Allow anonymous requests from browser or iframe
   checkRateLimit: checkRateLimit,
   removeHeaders: [
     'cookie',
     'cookie2',
-    // Strip Heroku-specific headers
     'x-request-start',
     'x-request-id',
     'via',
     'connect-time',
     'total-route-time',
-    // Other Heroku added debug headers
-    // 'x-forwarded-for',
-    // 'x-forwarded-proto',
-    // 'x-forwarded-port',
+    // Optional: 'x-forwarded-for', etc.
   ],
   redirectSameOrigin: true,
   httpProxyOptions: {
-    // Do not add X-Forwarded-For, etc. headers, because Heroku already adds it.
     xfwd: false,
+    followRedirects: true,
   },
-}).listen(port, host, function() {
-  console.log('Running CORS Anywhere on ' + host + ':' + port);
+
+  // ✅ (Optional) disable the built-in location check that causes "Invalid host"
+  handleInitialRequest: function (req, res, location) {
+    // Allow all valid URLs through
+    if (!/^https?:\/\//i.test(location)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Invalid target URL. Make sure it starts with http:// or https://');
+      return true; // Block this request
+    }
+    return false; // Allow proxy to handle it
+  },
+}).listen(port, host, () => {
+  console.log(`✅ CORS Anywhere is running at http://${host}:${port}`);
 });
